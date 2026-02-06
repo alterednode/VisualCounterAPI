@@ -88,7 +88,7 @@ class VisualCounterService:
         if not rois:
             raise ValueError(
                 "No ROI configured for camera and no custom ROI provided. "
-                "Define camera rois/default_roi or pass ?roi=x1,y1;x2,y2;x3,y3"
+                "Define camera rois/default_roi or pass ?roi=0.30,0.45;0.35,0.33;0.56,0.33"
             )
 
         names = ", ".join(sorted(rois.keys()))

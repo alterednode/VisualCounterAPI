@@ -19,15 +19,32 @@ def parse_roi_string(raw: str) -> list[Point]:
         if len(parts) != 2:
             raise ValueError(f"Invalid ROI point '{token}', expected x,y")
         x, y = parts
-        points.append((int(x), int(y)))
+        x_f = float(x)
+        y_f = float(y)
+        if not (0.0 <= x_f <= 1.0 and 0.0 <= y_f <= 1.0):
+            raise ValueError(f"ROI point '{token}' must be normalized between 0 and 1")
+        points.append((x_f, y_f))
 
     if len(points) < 3:
         raise ValueError("ROI must contain at least 3 points")
     return points
 
 
-def count_in_roi(detections: Iterable[Detection], roi_points: list[Point]) -> int:
-    polygon = np.array(roi_points, dtype=np.int32)
+def roi_polygon(roi_points: list[Point], frame_shape: tuple[int, int]) -> np.ndarray:
+    frame_h, frame_w = frame_shape
+    if frame_h <= 0 or frame_w <= 0:
+        raise ValueError(f"Invalid frame shape {frame_shape}")
+
+    max_x = max(frame_w - 1, 0)
+    max_y = max(frame_h - 1, 0)
+    pixel_points: list[tuple[int, int]] = []
+    for x_norm, y_norm in roi_points:
+        pixel_points.append((int(round(x_norm * max_x)), int(round(y_norm * max_y))))
+
+    return np.array(pixel_points, dtype=np.int32)
+
+
+def count_in_polygon(detections: Iterable[Detection], polygon: np.ndarray) -> int:
     count = 0
     for det in detections:
         cx, cy = det.centroid
@@ -36,8 +53,17 @@ def count_in_roi(detections: Iterable[Detection], roi_points: list[Point]) -> in
     return count
 
 
+def count_in_roi(
+    detections: Iterable[Detection],
+    roi_points: list[Point],
+    frame_shape: tuple[int, int],
+) -> int:
+    polygon = roi_polygon(roi_points, frame_shape)
+    return count_in_polygon(detections, polygon)
+
+
 def roi_to_key(roi_name: str | None, roi_points: list[Point]) -> str:
     if roi_name:
         return f"name:{roi_name}"
-    joined = ";".join(f"{x},{y}" for x, y in roi_points)
+    joined = ";".join(f"{x:.6g},{y:.6g}" for x, y in roi_points)
     return f"points:{joined}"

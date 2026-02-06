@@ -45,7 +45,7 @@ VISUALCOUNTER_CONFIG=/path/to/config.yaml uv run visualcounter-api
 ## API
 
 - `GET /{camera_name}/count?roi_name=queue`
-- `GET /{camera_name}/count?roi=390,325;450,240;720,240;720,325`
+- `GET /{camera_name}/count?roi=0.3047,0.4514;0.3516,0.3333;0.5625,0.3333;0.5625,0.4514`
 - `GET /{camera_name}/count/stream?roi_name=queue`
 - `GET /{camera_name}/count/live?roi_name=queue`
 - `GET /{camera_name}/rois`
@@ -67,7 +67,7 @@ Camera settings include:
 - `detector` (`type`, `model_path`, `device`, thresholds, etc.)
 - `processing` (`scale`, `every_n_frames`, `max_processed_fps`, `infer_every_seconds`, crop settings, `show_preview`)
 - `smoothing` (optional; enabled only when present)
-- `rois` (named polygons; each camera can define multiple ROI presets)
+- `rois` (named polygons in normalized coordinates `0..1`; each camera can define multiple ROI presets)
 - `default_roi` (optional)
 
 When `processing.show_preview` is `true`, a local OpenCV preview window is shown for that camera with ROI and detection overlays. Press `q` in the preview window to stop that worker.

@@ -11,7 +11,7 @@ import numpy as np
 from visualcounter.config import CameraSettings, Point
 from visualcounter.detectors.base import Detector
 from visualcounter.models import Detection, Snapshot
-from visualcounter.roi import count_in_roi
+from visualcounter.roi import count_in_polygon, count_in_roi, roi_polygon
 from visualcounter.smoothing.base import Smoother
 
 
@@ -84,7 +84,7 @@ class CameraWorker:
         if snapshot is None:
             raise RuntimeError(f"No frames have been processed for camera '{self.camera_name}' yet")
 
-        raw_count = count_in_roi(snapshot.detections, roi)
+        raw_count = count_in_roi(snapshot.detections, roi, snapshot.frame_shape)
 
         smoothed_value: float | None = None
         smoothing_type: str | None = None
@@ -107,7 +107,12 @@ class CameraWorker:
     def _build_count_samples(self, snapshots: list[Snapshot], roi: list[Point]) -> list[tuple[float, float]]:
         samples: list[tuple[float, float]] = []
         for snapshot in snapshots:
-            samples.append((snapshot.timestamp, float(count_in_roi(snapshot.detections, roi))))
+            samples.append(
+                (
+                    snapshot.timestamp,
+                    float(count_in_roi(snapshot.detections, roi, snapshot.frame_shape)),
+                )
+            )
         return samples
 
     def _record_snapshot(self, timestamp: float, frame_shape: tuple[int, int], detections: list[Detection]) -> None:
@@ -141,24 +146,23 @@ class CameraWorker:
         with self._condition:
             self._last_error = None
 
-    def _scaled_rois(self) -> dict[str, np.ndarray]:
-        scale = self.settings.processing.scale
+    def _frame_rois(self, frame_shape: tuple[int, int]) -> dict[str, np.ndarray]:
         rois: dict[str, np.ndarray] = {}
-
         for name, points in self.settings.rois.items():
-            arr = np.array(points, dtype=np.int32)
-            if scale != 1.0:
-                arr = np.round(arr.astype(np.float32) * scale).astype(np.int32)
-            rois[name] = arr
+            rois[name] = roi_polygon(points, frame_shape)
         return rois
 
-    def _crop_rect(self, frame_shape: tuple[int, int], scaled_rois: dict[str, np.ndarray]) -> tuple[int, int, int, int] | None:
+    def _crop_rect(
+        self,
+        frame_shape: tuple[int, int],
+        pixel_rois: dict[str, np.ndarray],
+    ) -> tuple[int, int, int, int] | None:
         if not self.settings.processing.crop_to_roi:
             return None
-        if not scaled_rois:
+        if not pixel_rois:
             return None
 
-        all_points = np.concatenate(list(scaled_rois.values()), axis=0)
+        all_points = np.concatenate(list(pixel_rois.values()), axis=0)
         x, y, w, h = cv2.boundingRect(all_points)
         pad = self.settings.processing.crop_pad
 
@@ -184,7 +188,8 @@ class CameraWorker:
             self._set_error(f"Failed to open source: {self.settings.source_url}")
             return
 
-        scaled_rois: dict[str, np.ndarray] | None = None
+        pixel_rois: dict[str, np.ndarray] | None = None
+        roi_shape: tuple[int, int] | None = None
         crop_rect: tuple[int, int, int, int] | None = None
 
         try:
@@ -204,13 +209,14 @@ class CameraWorker:
                         interpolation=cv2.INTER_AREA,
                     )
 
-                if scaled_rois is None:
-                    scaled_rois = self._scaled_rois()
-                    crop_rect = self._crop_rect(frame.shape, scaled_rois)
+                if pixel_rois is None or roi_shape != frame.shape[:2]:
+                    roi_shape = frame.shape[:2]
+                    pixel_rois = self._frame_rois(roi_shape)
+                    crop_rect = self._crop_rect(roi_shape, pixel_rois)
 
                 frame_index += 1
                 if processing.every_n_frames > 1 and frame_index % processing.every_n_frames != 0:
-                    if self._preview_enabled and self._render_preview(frame, latest_detections, scaled_rois):
+                    if self._preview_enabled and self._render_preview(frame, latest_detections, pixel_rois):
                         break
                     continue
 
@@ -219,12 +225,12 @@ class CameraWorker:
                 if processing.max_processed_fps and processing.max_processed_fps > 0:
                     min_gap = 1.0 / processing.max_processed_fps
                     if (now - last_processed_ts) < min_gap:
-                        if self._preview_enabled and self._render_preview(frame, latest_detections, scaled_rois):
+                        if self._preview_enabled and self._render_preview(frame, latest_detections, pixel_rois):
                             break
                         continue
 
                 if processing.infer_every_seconds > 0 and (now - last_infer_ts) < processing.infer_every_seconds:
-                    if self._preview_enabled and self._render_preview(frame, latest_detections, scaled_rois):
+                    if self._preview_enabled and self._render_preview(frame, latest_detections, pixel_rois):
                         break
                     continue
 
@@ -260,7 +266,7 @@ class CameraWorker:
                 latest_detections = detections
                 self._clear_error()
                 self._record_snapshot(now, frame.shape[:2], detections)
-                if self._preview_enabled and self._render_preview(frame, latest_detections, scaled_rois):
+                if self._preview_enabled and self._render_preview(frame, latest_detections, pixel_rois):
                     break
                 last_processed_ts = now
                 last_infer_ts = now
@@ -277,7 +283,7 @@ class CameraWorker:
         self,
         frame: np.ndarray,
         detections: list[Detection],
-        scaled_rois: dict[str, np.ndarray] | None,
+        pixel_rois: dict[str, np.ndarray] | None,
     ) -> bool:
         overlay = frame.copy()
 
@@ -298,10 +304,10 @@ class CameraWorker:
                 cv2.LINE_AA,
             )
 
-        roi_map = scaled_rois or {}
+        roi_map = pixel_rois or {}
         for roi_name, polygon in roi_map.items():
             cv2.polylines(overlay, [polygon], True, (0, 255, 255), 1)
-            count = count_in_roi(detections, [(int(x), int(y)) for x, y in polygon.tolist()])
+            count = count_in_polygon(detections, polygon)
             label_anchor = tuple(int(v) for v in polygon[0])
             cv2.putText(
                 overlay,

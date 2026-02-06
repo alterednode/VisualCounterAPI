@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-Point = tuple[int, int]
+Point = tuple[float, float]
 RoiMap = dict[str, list[Point]]
 
 
@@ -61,7 +61,13 @@ class CameraSettings(BaseModel):
                 if not isinstance(point, (list, tuple)) or len(point) != 2:
                     raise ValueError(f"roi '{roi_name}' has invalid point {point!r}")
                 x, y = point
-                parsed_pts.append((int(x), int(y)))
+                x_f = float(x)
+                y_f = float(y)
+                if not (0.0 <= x_f <= 1.0 and 0.0 <= y_f <= 1.0):
+                    raise ValueError(
+                        f"roi '{roi_name}' point {(x, y)!r} must be normalized between 0 and 1"
+                    )
+                parsed_pts.append((x_f, y_f))
             parsed[roi_name] = parsed_pts
         return parsed
 
