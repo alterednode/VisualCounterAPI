@@ -54,12 +54,59 @@ Example request:
 curl -H 'X-API-Key: dev-key-1' http://localhost:8000/timcam_courtyard/count
 ```
 
+API key enforcement is controlled by the top-level `api` config block:
+
+```yaml
+api:
+  api_key_mode: custom_rois
+  allow_custom_rois: true
+```
+
+Modes:
+
+- `disabled`: no API key required anywhere
+- `all`: API key required for all routes
+- `custom_rois`: preset/default ROI access is public, but requests using `?roi=...` require an API key
+
+If `allow_custom_rois` is `false`, requests using `?roi=...` are rejected entirely.
+
+## Container
+
+Build the image:
+
+```bash
+docker build -t visualcounter-api .
+```
+
+Run it directly:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e VISUALCOUNTER_API_KEYS=dev-key-1 \
+  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
+  -v "$(pwd)/models:/app/models:ro" \
+  visualcounter-api
+```
+
+Or use Compose:
+
+```bash
+docker compose up --build
+```
+
+Notes:
+
+- `config.yaml` and `models/` are mounted read-only in `compose.yaml` so you can update settings or swap models without rebuilding the image.
+- `processing.show_preview: true` is usually not practical inside a container unless you explicitly wire through an X11/Wayland GUI. For normal container deployments, set it to `false`.
+- The image installs `ffmpeg` so OpenCV can open HLS sources such as `.m3u8` streams.
+
 ## API
 
 - `GET /{camera_name}/count?roi_name=queue`
 - `GET /{camera_name}/count?roi=0.3047,0.4514;0.3516,0.3333;0.5625,0.3333;0.5625,0.4514`
 - `GET /{camera_name}/count/stream?roi_name=queue`
 - `GET /{camera_name}/count/live?roi_name=queue`
+- `GET /{camera_name}`
 - `GET /{camera_name}/rois`
 
 If no ROI query is provided, the API uses `default_roi` when configured.
@@ -70,6 +117,7 @@ See `config.yaml` for a full example.
 
 Top-level keys:
 
+- `api`: API exposure policy (`api_key_mode`, `allow_custom_rois`)
 - `defaults`: shared base settings applied to all cameras (except `source_url`).
 - `cameras`: per-camera settings and overrides.
 
@@ -81,6 +129,7 @@ Camera settings include:
 - `smoothing` (optional; enabled only when present)
 - `rois` (named polygons in normalized coordinates `0..1`; each camera can define multiple ROI presets)
 - `default_roi` (optional)
+- `details` (optional arbitrary metadata returned by `GET /{camera_name}`)
 
 When `processing.show_preview` is `true`, a local OpenCV preview window is shown for that camera with ROI and detection overlays. Press `q` in the preview window to stop that worker.
 
