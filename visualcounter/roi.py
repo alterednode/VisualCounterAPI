@@ -67,3 +67,87 @@ def roi_to_key(roi_name: str | None, roi_points: list[Point]) -> str:
         return f"name:{roi_name}"
     joined = ";".join(f"{x:.6g},{y:.6g}" for x, y in roi_points)
     return f"points:{joined}"
+
+
+def _clip_polygon_against_edge(
+    polygon: list[Point],
+    inside: callable,
+    intersect: callable,
+) -> list[Point]:
+    if not polygon:
+        return []
+
+    output: list[Point] = []
+    prev = polygon[-1]
+    prev_inside = inside(prev)
+    for curr in polygon:
+        curr_inside = inside(curr)
+        if curr_inside:
+            if not prev_inside:
+                output.append(intersect(prev, curr))
+            output.append(curr)
+        elif prev_inside:
+            output.append(intersect(prev, curr))
+        prev = curr
+        prev_inside = curr_inside
+    return output
+
+
+def clip_roi_to_unit_square(roi_points: list[Point]) -> list[Point]:
+    # Clip polygon against x>=0, x<=1, y>=0, y<=1.
+    poly: list[Point] = list(roi_points)
+
+    poly = _clip_polygon_against_edge(
+        poly,
+        inside=lambda p: p[0] >= 0.0,
+        intersect=lambda a, b: (0.0, a[1] + (b[1] - a[1]) * ((0.0 - a[0]) / (b[0] - a[0]))),
+    )
+    poly = _clip_polygon_against_edge(
+        poly,
+        inside=lambda p: p[0] <= 1.0,
+        intersect=lambda a, b: (1.0, a[1] + (b[1] - a[1]) * ((1.0 - a[0]) / (b[0] - a[0]))),
+    )
+    poly = _clip_polygon_against_edge(
+        poly,
+        inside=lambda p: p[1] >= 0.0,
+        intersect=lambda a, b: (a[0] + (b[0] - a[0]) * ((0.0 - a[1]) / (b[1] - a[1])), 0.0),
+    )
+    poly = _clip_polygon_against_edge(
+        poly,
+        inside=lambda p: p[1] <= 1.0,
+        intersect=lambda a, b: (a[0] + (b[0] - a[0]) * ((1.0 - a[1]) / (b[1] - a[1])), 1.0),
+    )
+
+    deduped: list[Point] = []
+    for point in poly:
+        if deduped and abs(point[0] - deduped[-1][0]) < 1e-9 and abs(point[1] - deduped[-1][1]) < 1e-9:
+            continue
+        deduped.append(point)
+
+    if len(deduped) >= 2:
+        first = deduped[0]
+        last = deduped[-1]
+        if abs(first[0] - last[0]) < 1e-9 and abs(first[1] - last[1]) < 1e-9:
+            deduped.pop()
+
+    return deduped
+
+
+def transform_roi_for_source_crop(
+    roi_points: list[Point],
+    source_crop: tuple[float, float, float, float] | None,
+) -> list[Point]:
+    if source_crop is None:
+        return list(roi_points)
+
+    x1, y1, x2, y2 = source_crop
+    width = x2 - x1
+    height = y2 - y1
+    if width <= 0.0 or height <= 0.0:
+        return []
+
+    transformed = [((x - x1) / width, (y - y1) / height) for x, y in roi_points]
+    clipped = clip_roi_to_unit_square(transformed)
+    if len(clipped) < 3:
+        return []
+    return clipped

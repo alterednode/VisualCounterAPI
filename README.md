@@ -72,6 +72,20 @@ Camera settings include:
 
 When `processing.show_preview` is `true`, a local OpenCV preview window is shown for that camera with ROI and detection overlays. Press `q` in the preview window to stop that worker.
 
+Cropping behavior:
+
+- `processing.source_crop` (optional) crops the source frame first, before ROI polygon conversion and inference.
+- ROI points are still authored in full-source normalized coordinates.
+- For source-cropped cameras, ROIs are transformed into the cropped coordinate space.
+- If an ROI is partially outside the source crop, it is clipped to the crop bounds.
+- If clipping leaves fewer than 3 points, that ROI is treated as empty (count is `0`).
+
+Freshness behavior:
+
+- `processing.latest_frame_queue_size` enables queued capture mode when set above `0`.
+- A value of `1` keeps only the freshest frame (lowest staleness, highest frame drop).
+- Larger values keep a short queue of recent frames (less drop, potentially more staleness).
+
 ## Extensibility
 
 - Add detector backends by implementing `visualcounter/detectors/base.py` and registering in `visualcounter/service.py`.

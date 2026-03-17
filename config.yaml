@@ -5,20 +5,14 @@ defaults:
     device: "CPU"
     model_size: 640
     person_class_id: 0
-    conf_threshold: 0.2
-    nms_threshold: 0.4
+    conf_threshold: 0.15
+    nms_threshold: 0.7
   processing:
     scale: 1.0
-    every_n_frames: 2
-    max_processed_fps: 4.0
-    infer_every_seconds: 0.0
-    # crop_to_roi: true
-    # crop_pad: 40
-    show_preview: false
   smoothing:
     type: "time_weighted_average"
     params:
-      window_seconds: 10.0
+      window_seconds: 5.0
 
 cameras:
   # timcam_queue:
@@ -38,36 +32,35 @@ cameras:
   #       - [0.5938, 0.3056]
   #       - [0.5938, 0.4861]
 
-  test:
-    source_url: "https://hd-auth.skylinewebcams.com/live.m3u8?a=iulv18f8p832qfu0om4qegm347"
-    detector:
-      type: "openvino_yolo"
-      model_path: "models/yolov8s_openvino_model/yolov8s.xml"
-      device: "CPU"
-      model_size: 640
-      person_class_id: 0
-      conf_threshold: 0.1
-      nms_threshold: 0.8
-    processing:
-      show_preview: true
-      every_n_frames: 2
-      max_processed_fps: 2.0
-    smoothing:
-      type: "none"
-
-
-
-  # timcam_courtyard:
-  #   source_url: "https://streamserve.ok.ubc.ca/LiveCams/timcam.stream_720p/playlist.m3u8"
-  #   default_roi: "courtyard"
+  # test:
+  #   source_url: "https://hd-auth.skylinewebcams.com/live.m3u8?a=iulv18f8p832qfu0om4qegm347"
+  #   detector:
+  #     type: "openvino_yolo"
+  #     model_path: "models/yolov8s_openvino_model/yolov8s.xml"
+  #     device: "CPU"
+  #     model_size: 640
+  #     person_class_id: 0
+  #     conf_threshold: 0.1
+  #     nms_threshold: 0.8
   #   processing:
-  #     crop_to_roi: false
-  #     every_n_frames: 4
+  #     show_preview: true
+  #     every_n_frames: 2
   #     max_processed_fps: 2.0
-  #   rois:
-  #     courtyard:
-  #       - [0.1016, 0.4028]
-  #       - [0.1719, 0.2778]
-  #       - [0.5000, 0.2639]
-  #       - [0.5469, 0.6389]
-  #       - [0.1719, 0.6667]
+  #   smoothing:
+  #     type: "none"
+
+  timcam_courtyard:
+    source_url: "https://streamserve.ok.ubc.ca/LiveCams/timcam.stream_720p/playlist.m3u8"
+    default_roi: "approx-line-area"
+    processing:
+      source_crop: [0.3, 0.25, 0.6, 0.5]
+      latest_frame_queue_size: 3
+      every_n_frames: 1
+      max_processed_fps: null
+      show_preview: true
+    rois:
+      approx-line-area:
+        - [0.38, 0.25]
+        - [0.35, 0.45]
+        - [0.54, 0.45]
+        - [0.58, 0.25]

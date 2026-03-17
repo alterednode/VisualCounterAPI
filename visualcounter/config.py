@@ -26,9 +26,22 @@ class ProcessingSettings(BaseModel):
     every_n_frames: int = 1
     max_processed_fps: float | None = None
     infer_every_seconds: float = 0.0
-    crop_to_roi: bool = False
-    crop_pad: int = 40
+    latest_frame_queue_size: int = Field(default=0, ge=0)
+    source_crop: tuple[float, float, float, float] | None = None
     show_preview: bool = False
+
+    @field_validator("source_crop", mode="before")
+    @classmethod
+    def validate_source_crop(cls, value: Any) -> tuple[float, float, float, float] | None:
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple)) or len(value) != 4:
+            raise ValueError("source_crop must be [x1, y1, x2, y2] in normalized coordinates")
+
+        x1, y1, x2, y2 = (float(v) for v in value)
+        if not (0.0 <= x1 < x2 <= 1.0 and 0.0 <= y1 < y2 <= 1.0):
+            raise ValueError("source_crop values must satisfy 0<=x1<x2<=1 and 0<=y1<y2<=1")
+        return (x1, y1, x2, y2)
 
 
 class SmoothingSettings(BaseModel):

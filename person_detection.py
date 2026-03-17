@@ -107,14 +107,16 @@ def letterbox(img: np.ndarray, new_shape: int) -> tuple[np.ndarray, float, tuple
     new_unpad = (int(round(w * r)), int(round(h * r)))
     dw = new_shape - new_unpad[0]
     dh = new_shape - new_unpad[1]
-    dw //= 2
-    dh //= 2
+    left = dw // 2
+    right = dw - left
+    top = dh // 2
+    bottom = dh - top
 
     resized = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
     padded = cv2.copyMakeBorder(
-        resized, dh, dh, dw, dw, cv2.BORDER_CONSTANT, value=(114, 114, 114)
+        resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114)
     )
-    return padded, r, (dw, dh)
+    return padded, r, (left, top)
 
 
 def preprocess(frame: np.ndarray) -> tuple[np.ndarray, float, tuple[int, int]]:

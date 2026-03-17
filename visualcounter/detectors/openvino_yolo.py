@@ -45,20 +45,22 @@ class OpenVinoYoloDetector(Detector):
         new_unpad = (int(round(w * ratio)), int(round(h * ratio)))
         dw = new_shape - new_unpad[0]
         dh = new_shape - new_unpad[1]
-        dw //= 2
-        dh //= 2
+        left = dw // 2
+        right = dw - left
+        top = dh // 2
+        bottom = dh - top
 
         resized = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
         padded = cv2.copyMakeBorder(
             resized,
-            dh,
-            dh,
-            dw,
-            dw,
+            top,
+            bottom,
+            left,
+            right,
             cv2.BORDER_CONSTANT,
             value=(114, 114, 114),
         )
-        return padded, ratio, (dw, dh)
+        return padded, ratio, (left, top)
 
     def _preprocess(self, frame: np.ndarray) -> tuple[np.ndarray, float, tuple[int, int]]:
         image, ratio, dwdh = self._letterbox(frame)
