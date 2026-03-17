@@ -80,7 +80,7 @@ class OpenVinoYoloDetector(Detector):
             preds = preds[0]
 
         if preds.ndim == 2 and preds.shape[-1] == 6:
-            return self._postprocess_end_to_end(preds, frame_shape)
+            return self._postprocess_end_to_end(preds, ratio, dwdh, frame_shape)
 
         settings = self._settings
 
@@ -151,6 +151,8 @@ class OpenVinoYoloDetector(Detector):
     def _postprocess_end_to_end(
         self,
         preds: np.ndarray,
+        ratio: float,
+        dwdh: tuple[int, int],
         frame_shape: tuple[int, int],
     ) -> list[Detection]:
         settings = self._settings
@@ -167,10 +169,16 @@ class OpenVinoYoloDetector(Detector):
         if boxes_xyxy.size == 0:
             return []
 
-        # Some end-to-end exports return normalized corners, others return pixels.
+        # Some end-to-end exports return normalized corners, others return
+        # letterboxed pixel coordinates in model input space.
         if float(np.max(np.abs(boxes_xyxy))) <= 1.5:
             boxes_xyxy[:, [0, 2]] *= w
             boxes_xyxy[:, [1, 3]] *= h
+        else:
+            dw, dh = dwdh
+            boxes_xyxy[:, [0, 2]] -= dw
+            boxes_xyxy[:, [1, 3]] -= dh
+            boxes_xyxy /= ratio
 
         boxes_xyxy[:, [0, 2]] = np.clip(boxes_xyxy[:, [0, 2]], 0, w - 1)
         boxes_xyxy[:, [1, 3]] = np.clip(boxes_xyxy[:, [1, 3]], 0, h - 1)
