@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.responses import StreamingResponse
+from fastapi.security import APIKeyHeader
 
 from visualcounter.config import AppConfig, load_config
 from visualcounter.processing.engine import CountResult
 from visualcounter.service import VisualCounterService
+
+logger = logging.getLogger(__name__)
+API_KEY_HEADER_NAME = "X-API-Key"
+API_KEYS_ENV_NAME = "VISUALCOUNTER_API_KEYS"
+api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
 
 
 def _serialize_count(result: CountResult) -> dict[str, object]:
@@ -30,10 +38,31 @@ def _serialize_count(result: CountResult) -> dict[str, object]:
     }
 
 
+def _load_api_keys() -> frozenset[str]:
+    raw = os.environ.get(API_KEYS_ENV_NAME, "")
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 def create_app(config_path: str | None = None) -> FastAPI:
     resolved_path = Path(config_path or os.environ.get("VISUALCOUNTER_CONFIG", "config.yaml"))
     config: AppConfig = load_config(resolved_path)
     service = VisualCounterService(config)
+    api_keys = _load_api_keys()
+
+    if api_keys:
+        logger.info("API key auth enabled with %d configured key(s)", len(api_keys))
+    else:
+        logger.warning(
+            "API key auth is disabled because %s is not set",
+            API_KEYS_ENV_NAME,
+        )
+
+    async def require_api_key(api_key: str | None = Security(api_key_header)) -> None:
+        if not api_keys:
+            return
+
+        if api_key is None or not any(hmac.compare_digest(api_key, configured) for configured in api_keys):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -43,7 +72,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
         finally:
             service.stop()
 
-    app = FastAPI(title="VisualCounter API", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(
+        title="VisualCounter API",
+        version="1.0.0",
+        lifespan=lifespan,
+        dependencies=[Depends(require_api_key)],
+    )
 
     @app.get("/")
     async def root() -> dict[str, object]:

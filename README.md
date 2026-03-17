@@ -42,6 +42,18 @@ By default, config is loaded from `config.yaml`. Override with:
 VISUALCOUNTER_CONFIG=/path/to/config.yaml uv run visualcounter-api
 ```
 
+To enable API key auth, set `VISUALCOUNTER_API_KEYS` to a comma-separated list and send one of the keys in the `X-API-Key` header:
+
+```bash
+VISUALCOUNTER_API_KEYS=dev-key-1,dev-key-2 uv run visualcounter-api
+```
+
+Example request:
+
+```bash
+curl -H 'X-API-Key: dev-key-1' http://localhost:8000/timcam_courtyard/count
+```
+
 ## API
 
 - `GET /{camera_name}/count?roi_name=queue`
