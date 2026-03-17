@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -49,6 +50,11 @@ class SmoothingSettings(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ApiSettings(BaseModel):
+    api_key_mode: Literal["disabled", "all", "custom_rois"] = "disabled"
+    allow_custom_rois: bool = True
+
+
 class CameraSettings(BaseModel):
     source_url: str
     detector: DetectorSettings
@@ -56,6 +62,7 @@ class CameraSettings(BaseModel):
     smoothing: SmoothingSettings | None = None
     rois: RoiMap = Field(default_factory=dict)
     default_roi: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("rois", mode="before")
     @classmethod
@@ -92,6 +99,7 @@ class CameraSettings(BaseModel):
 
 
 class AppConfig(BaseModel):
+    api: ApiSettings = Field(default_factory=ApiSettings)
     cameras: dict[str, CameraSettings]
 
 
@@ -110,6 +118,14 @@ def load_config(path: str | Path) -> AppConfig:
     data = yaml.safe_load(config_path.read_text())
     if not isinstance(data, dict):
         raise ValueError("Config root must be a mapping")
+
+    api_data = data.get("api") or {}
+    if not isinstance(api_data, dict):
+        raise ValueError("api must be a mapping")
+    try:
+        api = ApiSettings.model_validate(api_data)
+    except ValidationError as exc:
+        raise ValueError(f"Invalid top-level api configuration: {exc}") from exc
 
     defaults = data.get("defaults") or {}
     if not isinstance(defaults, dict):
@@ -133,4 +149,4 @@ def load_config(path: str | Path) -> AppConfig:
         except ValidationError as exc:
             raise ValueError(f"Invalid configuration for camera '{camera_name}': {exc}") from exc
 
-    return AppConfig(cameras=resolved_cameras)
+    return AppConfig(api=api, cameras=resolved_cameras)

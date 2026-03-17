@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Security
+from fastapi import FastAPI, HTTPException, Query, Security
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 
@@ -48,17 +48,25 @@ def create_app(config_path: str | None = None) -> FastAPI:
     config: AppConfig = load_config(resolved_path)
     service = VisualCounterService(config)
     api_keys = _load_api_keys()
+    api_settings = config.api
+
+    if api_settings.api_key_mode != "disabled" and not api_keys:
+        raise ValueError(
+            f"{API_KEYS_ENV_NAME} must be set when api.api_key_mode is '{api_settings.api_key_mode}'"
+        )
 
     if api_keys:
         logger.info("API key auth enabled with %d configured key(s)", len(api_keys))
     else:
-        logger.warning(
-            "API key auth is disabled because %s is not set",
-            API_KEYS_ENV_NAME,
-        )
+        logger.info("API key auth is disabled")
 
-    async def require_api_key(api_key: str | None = Security(api_key_header)) -> None:
-        if not api_keys:
+    def enforce_api_access(api_key: str | None, *, custom_roi: bool = False) -> None:
+        if custom_roi and not api_settings.allow_custom_rois:
+            raise HTTPException(status_code=403, detail="Custom ROIs are disabled")
+
+        if api_settings.api_key_mode == "disabled":
+            return
+        if api_settings.api_key_mode == "custom_rois" and not custom_roi:
             return
 
         if api_key is None or not any(hmac.compare_digest(api_key, configured) for configured in api_keys):
@@ -76,19 +84,22 @@ def create_app(config_path: str | None = None) -> FastAPI:
         title="VisualCounter API",
         version="1.0.0",
         lifespan=lifespan,
-        dependencies=[Depends(require_api_key)],
     )
 
     @app.get("/")
-    async def root() -> dict[str, object]:
+    async def root(api_key: str | None = Security(api_key_header)) -> dict[str, object]:
+        enforce_api_access(api_key)
         return {
             "service": "visualcounter",
             "cameras": service.camera_names(),
             "config": str(resolved_path),
+            "api_key_mode": api_settings.api_key_mode,
+            "allow_custom_rois": api_settings.allow_custom_rois,
         }
 
     @app.get("/{camera_name}/rois")
-    async def get_rois(camera_name: str) -> dict[str, object]:
+    async def get_rois(camera_name: str, api_key: str | None = Security(api_key_header)) -> dict[str, object]:
+        enforce_api_access(api_key)
         try:
             rois = service.get_rois(camera_name)
         except KeyError as exc:
@@ -100,12 +111,29 @@ def create_app(config_path: str | None = None) -> FastAPI:
             "default_roi": config.cameras[camera_name].default_roi,
         }
 
+    @app.get("/{camera_name}")
+    async def get_camera(camera_name: str, api_key: str | None = Security(api_key_header)) -> dict[str, object]:
+        enforce_api_access(api_key)
+        try:
+            camera = config.cameras[camera_name]
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown camera '{camera_name}'") from exc
+
+        return {
+            "camera": camera_name,
+            "default_roi": camera.default_roi,
+            "rois": list(camera.rois.keys()),
+            "details": camera.details,
+        }
+
     @app.get("/{camera_name}/count")
     async def get_count(
         camera_name: str,
         roi_name: str | None = Query(default=None),
         roi: str | None = Query(default=None),
+        api_key: str | None = Security(api_key_header),
     ) -> dict[str, object]:
+        enforce_api_access(api_key, custom_roi=roi is not None)
         try:
             result = service.get_count(camera_name, roi_name=roi_name, roi=roi)
         except KeyError as exc:
@@ -158,7 +186,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         camera_name: str,
         roi_name: str | None = Query(default=None),
         roi: str | None = Query(default=None),
+        api_key: str | None = Security(api_key_header),
     ) -> StreamingResponse:
+        enforce_api_access(api_key, custom_roi=roi is not None)
         return StreamingResponse(
             stream_counts(camera_name, roi_name, roi),
             media_type="text/event-stream",
@@ -174,7 +204,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         camera_name: str,
         roi_name: str | None = Query(default=None),
         roi: str | None = Query(default=None),
+        api_key: str | None = Security(api_key_header),
     ) -> StreamingResponse:
-        return await stream_count(camera_name=camera_name, roi_name=roi_name, roi=roi)
+        enforce_api_access(api_key, custom_roi=roi is not None)
+        return await stream_count(camera_name=camera_name, roi_name=roi_name, roi=roi, api_key=api_key)
 
     return app
