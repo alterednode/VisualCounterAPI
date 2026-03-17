@@ -76,10 +76,14 @@ class OpenVinoYoloDetector(Detector):
         dwdh: tuple[int, int],
         frame_shape: tuple[int, int],
     ) -> list[Detection]:
+        if preds.ndim == 3 and preds.shape[0] == 1:
+            preds = preds[0]
+
+        if preds.ndim == 2 and preds.shape[-1] == 6:
+            return self._postprocess_end_to_end(preds, frame_shape)
+
         settings = self._settings
 
-        if preds.ndim == 3:
-            preds = preds[0]
         if preds.shape[0] < preds.shape[1]:
             preds = preds.T
 
@@ -133,6 +137,71 @@ class OpenVinoYoloDetector(Detector):
         detections: list[Detection] = []
         for i in idx_values:
             x, y, bw, bh = boxes_xywh[i]
+            detections.append(
+                Detection(
+                    x=x,
+                    y=y,
+                    width=bw,
+                    height=bh,
+                    confidence=float(conf[i]),
+                )
+            )
+        return detections
+
+    def _postprocess_end_to_end(
+        self,
+        preds: np.ndarray,
+        frame_shape: tuple[int, int],
+    ) -> list[Detection]:
+        settings = self._settings
+        h, w = frame_shape[:2]
+
+        boxes_xyxy = preds[:, :4].astype(np.float32, copy=True)
+        conf = preds[:, 4].astype(np.float32, copy=False)
+        class_ids = preds[:, 5].astype(np.int32, copy=False)
+
+        keep = (conf >= settings.conf_threshold) & (class_ids == settings.person_class_id)
+        boxes_xyxy = boxes_xyxy[keep]
+        conf = conf[keep]
+
+        if boxes_xyxy.size == 0:
+            return []
+
+        # Some end-to-end exports return normalized corners, others return pixels.
+        if float(np.max(np.abs(boxes_xyxy))) <= 1.5:
+            boxes_xyxy[:, [0, 2]] *= w
+            boxes_xyxy[:, [1, 3]] *= h
+
+        boxes_xyxy[:, [0, 2]] = np.clip(boxes_xyxy[:, [0, 2]], 0, w - 1)
+        boxes_xyxy[:, [1, 3]] = np.clip(boxes_xyxy[:, [1, 3]], 0, h - 1)
+
+        boxes_xywh: list[list[int]] = []
+        for x1, y1, x2, y2 in boxes_xyxy:
+            ix1 = int(round(x1))
+            iy1 = int(round(y1))
+            ix2 = int(round(x2))
+            iy2 = int(round(y2))
+            boxes_xywh.append([ix1, iy1, max(0, ix2 - ix1), max(0, iy2 - iy1)])
+
+        idxs = cv2.dnn.NMSBoxes(
+            boxes_xywh,
+            conf.tolist(),
+            settings.conf_threshold,
+            settings.nms_threshold,
+        )
+        if len(idxs) == 0:
+            return []
+
+        if isinstance(idxs, np.ndarray):
+            idx_values = [int(i) for i in idxs.flatten()]
+        else:
+            idx_values = [int(i[0]) if isinstance(i, (list, tuple)) else int(i) for i in idxs]
+
+        detections: list[Detection] = []
+        for i in idx_values:
+            x, y, bw, bh = boxes_xywh[i]
+            if bw <= 0 or bh <= 0:
+                continue
             detections.append(
                 Detection(
                     x=x,
