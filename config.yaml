@@ -1,12 +1,12 @@
 defaults:
   detector:
     type: "openvino_yolo"
-    model_path: "models/yolov8s_openvino_model/yolov8s.xml"
+    model_path: "models/yolo26s_openvino_model/yolo26s.xml"
     device: "CPU"
     model_size: 640
     person_class_id: 0
-    conf_threshold: 0.10
-    nms_threshold: 0.7
+    conf_threshold: 0.15
+    nms_threshold: 0.6
   processing:
     scale: 1.0
   smoothing:
@@ -20,7 +20,7 @@ cameras:
     source_url: "https://streamserve.ok.ubc.ca/LiveCams/timcam.stream_720p/playlist.m3u8"
     default_roi: "approx-line-area"
     processing:
-      source_crop: [0.3, 0.25, 0.6, 0.5]
+      source_crop: [0.28, 0.22, 0.65, 0.6]
       latest_frame_queue_size: 3
       every_n_frames: 1
       max_processed_fps: null
