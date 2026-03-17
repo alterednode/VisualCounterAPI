@@ -1,3 +1,7 @@
+api:
+  api_key_mode: disabled
+  allow_custom_rois: false
+
 defaults:
   detector:
     type: "openvino_yolo"
@@ -18,16 +22,20 @@ cameras:
 
   timcam_cropped:
     source_url: "https://streamserve.ok.ubc.ca/LiveCams/timcam.stream_720p/playlist.m3u8"
-    default_roi: "approx-line-area"
+    details: 
+      title: "timcam line counter based made with AlteredNode's VisualCounterAPI"
+      terms: "for educational / non-commercial use only"
+      info: "for more info check out cheyne.dev/posts/timcam"
+    default_roi: "approx_line_area"
     processing:
-      source_crop: [0.28, 0.22, 0.65, 0.6]
-      latest_frame_queue_size: 3
+      source_crop: [0.33, 0.22, 0.6, 0.53]
+      latest_frame_queue_size: 10
       every_n_frames: 1
       max_processed_fps: null
       show_preview: true
     rois:
-      approx-line-area:
+      approx_line_area:
         - [0.38, 0.25]
         - [0.35, 0.45]
-        - [0.54, 0.45]
+        - [0.565, 0.45]
         - [0.58, 0.25]

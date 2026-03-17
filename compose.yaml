@@ -1,0 +1,15 @@
+services:
+  visualcounter:
+    build:
+      context: .
+    image: visualcounter-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      VISUALCOUNTER_CONFIG: /app/config.yaml
+      # Set this in your shell or an env file for real deployments.
+      VISUALCOUNTER_API_KEYS: ${VISUALCOUNTER_API_KEYS:-}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./models:/app/models:ro
+    restart: unless-stopped
