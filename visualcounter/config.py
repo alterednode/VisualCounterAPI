@@ -30,8 +30,8 @@ class ProcessingSettings(BaseModel):
     latest_frame_queue_size: int = Field(default=0, ge=0)
     reconnect_delay_seconds: float = Field(default=5.0, ge=0.0)
     read_failures_before_reconnect: int = Field(default=1, ge=1)
-    ffmpeg_open_timeout_ms: int | None = Field(default=15000, ge=1)
-    ffmpeg_read_timeout_ms: int | None = Field(default=15000, ge=1)
+    ffmpeg_open_timeout_ms: int | None = Field(default=30000, ge=1)
+    ffmpeg_read_timeout_ms: int | None = Field(default=60000, ge=1)
     source_crop: tuple[float, float, float, float] | None = None
     show_preview: bool = False
 

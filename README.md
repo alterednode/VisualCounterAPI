@@ -153,6 +153,7 @@ Stream resiliency:
 - `processing.read_failures_before_reconnect` controls how many failed `cap.read()` calls are tolerated before the source is reopened.
 - `processing.reconnect_delay_seconds` controls how long the worker waits before reconnecting to the source.
 - `processing.ffmpeg_open_timeout_ms` and `processing.ffmpeg_read_timeout_ms` are passed to OpenCV's FFmpeg backend when supported, which can reduce how long dead HLS/TCP reads block before reconnect logic runs.
+- For bursty sources, set `processing.ffmpeg_read_timeout_ms` comfortably above the longest expected gap between frame batches, or the worker will reconnect during normal idle periods.
 
 ## CORS
 
