@@ -147,6 +147,10 @@ Freshness behavior:
 - A value of `1` keeps only the freshest frame (lowest staleness, highest frame drop).
 - Larger values keep a short queue of recent frames (less drop, potentially more staleness).
 
+## CORS
+
+Set allowed origins in visualcounter/api.py
+
 ## Extensibility
 
 - Add detector backends by implementing `visualcounter/detectors/base.py` and registering in `visualcounter/service.py`.

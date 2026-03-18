@@ -13,6 +13,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Query, Security
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
 
 from visualcounter.config import AppConfig, load_config
 from visualcounter.processing.engine import CountResult
@@ -85,6 +86,14 @@ def create_app(config_path: str | None = None) -> FastAPI:
         version="1.0.0",
         lifespan=lifespan,
     )
+
+    app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://cheyne.dev"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
     @app.get("/")
     async def root(api_key: str | None = Security(api_key_header)) -> dict[str, object]:
