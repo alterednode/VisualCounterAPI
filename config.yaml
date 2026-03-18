@@ -30,9 +30,12 @@ cameras:
     processing:
       source_crop: [0.33, 0.22, 0.6, 0.53]
       latest_frame_queue_size: 10
+      reconnect_delay_seconds: 5.0
+      ffmpeg_open_timeout_ms: 15000
+      ffmpeg_read_timeout_ms: 15000
       every_n_frames: 1
       max_processed_fps: null
-      show_preview: true
+      show_preview: false
     rois:
       approx_line_area:
         - [0.38, 0.25]

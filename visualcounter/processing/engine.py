@@ -230,6 +230,42 @@ class CameraWorker:
         y2 = max(y1 + 1, min(frame_h, int(np.ceil(y2_n * frame_h))))
         return (x1, y1, x2, y2)
 
+    def _capture_timeout_params(self) -> list[int]:
+        processing = self.settings.processing
+        params: list[int] = []
+
+        open_timeout = processing.ffmpeg_open_timeout_ms
+        if open_timeout is not None and hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+            params.extend([int(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC), int(open_timeout)])
+
+        read_timeout = processing.ffmpeg_read_timeout_ms
+        if read_timeout is not None and hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+            params.extend([int(cv2.CAP_PROP_READ_TIMEOUT_MSEC), int(read_timeout)])
+
+        return params
+
+    def _open_capture(self) -> cv2.VideoCapture:
+        params = self._capture_timeout_params()
+        cap: cv2.VideoCapture | None = None
+
+        if params and hasattr(cv2, "CAP_FFMPEG"):
+            try:
+                cap = cv2.VideoCapture(self.settings.source_url, int(cv2.CAP_FFMPEG), params)
+            except (TypeError, cv2.error):
+                cap = None
+
+        if cap is None or not cap.isOpened():
+            if cap is not None:
+                cap.release()
+            cap = cv2.VideoCapture(self.settings.source_url)
+
+        # Hint to reduce upstream buffering where backend supports it.
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+
+    def _reconnect_delay(self) -> float:
+        return self.settings.processing.reconnect_delay_seconds
+
     def _run(self) -> None:
         processing = self.settings.processing
 
@@ -238,40 +274,7 @@ class CameraWorker:
         last_infer_ts = 0.0
         latest_preview_detections: list[Detection] = []
 
-        cap = cv2.VideoCapture(self.settings.source_url)
-        if not cap.isOpened():
-            self._set_error(f"Failed to open source: {self.settings.source_url}")
-            return
-        logger.info("Camera '%s': source opened successfully", self.camera_name)
-
-        # Hint to reduce upstream buffering where backend supports it.
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
         frame_queue_size = processing.latest_frame_queue_size
-        frame_queue: deque[np.ndarray] = deque(maxlen=frame_queue_size) if frame_queue_size > 0 else deque()
-        frame_queue_lock = threading.Lock()
-        frame_ready = threading.Condition(frame_queue_lock)
-
-        def capture_frames_to_queue() -> None:
-            while not self._stop_event.is_set():
-                ok, frame = cap.read()
-                if not ok:
-                    self._set_error("Failed to read frame from source")
-                    time.sleep(0.05)
-                    continue
-                with frame_ready:
-                    frame_queue.append(frame)
-                    frame_ready.notify_all()
-
-        capture_thread: threading.Thread | None = None
-        if frame_queue_size > 0:
-            capture_thread = threading.Thread(
-                target=capture_frames_to_queue,
-                name=f"camera-capture-{self.camera_name}",
-                daemon=True,
-            )
-            capture_thread.start()
-
         preview_pixel_rois: dict[str, np.ndarray] | None = None
         preview_roi_shape: tuple[int, int] | None = None
         source_crop_shape: tuple[int, int] | None = None
@@ -279,130 +282,198 @@ class CameraWorker:
 
         try:
             while not self._stop_event.is_set():
-                if frame_queue_size > 0:
-                    with frame_ready:
-                        if not frame_queue:
-                            frame_ready.wait(timeout=0.5)
-                        if not frame_queue:
-                            continue
-                        frame = frame_queue.popleft()
-                else:
-                    ok, frame = cap.read()
-                    if not ok:
-                        self._set_error("Failed to read frame from source")
-                        time.sleep(0.05)
-                        continue
-
-                if processing.scale != 1.0:
-                    frame = cv2.resize(
-                        frame,
-                        None,
-                        fx=processing.scale,
-                        fy=processing.scale,
-                        interpolation=cv2.INTER_AREA,
-                    )
-
-                preview_frame = frame
-
-                if preview_pixel_rois is None or preview_roi_shape != preview_frame.shape[:2]:
-                    preview_roi_shape = preview_frame.shape[:2]
-                    preview_pixel_rois = self._preview_rois(preview_roi_shape)
-
-                if source_crop_rect is None or source_crop_shape != preview_frame.shape[:2]:
-                    source_crop_shape = preview_frame.shape[:2]
-                    source_crop_rect = self._source_crop_rect(source_crop_shape)
-                    if source_crop_rect is not None and source_crop_shape not in self._logged_crop_shapes:
-                        self._logged_crop_shapes.add(source_crop_shape)
-                        logger.info(
-                            "Camera '%s': source_crop=%s resolved to pixels=%s on frame_shape=%s",
-                            self.camera_name,
-                            self.settings.processing.source_crop,
-                            source_crop_rect,
-                            source_crop_shape,
-                        )
-
-                processing_frame = preview_frame
-                crop_offset_x = 0
-                crop_offset_y = 0
-                if source_crop_rect is not None:
-                    sx1, sy1, sx2, sy2 = source_crop_rect
-                    processing_frame = preview_frame[sy1:sy2, sx1:sx2]
-                    crop_offset_x = sx1
-                    crop_offset_y = sy1
-                    if processing_frame.size == 0:
-                        self._set_error(f"Source crop produced an empty frame: {source_crop_rect}")
-                        time.sleep(0.05)
-                        continue
-
-                processing_shape = processing_frame.shape[:2]
-                if processing_shape not in self._logged_roi_shapes:
-                    self._logged_roi_shapes.add(processing_shape)
-                    logger.info(
-                        "Camera '%s': processing frame_shape=%s, preview frame_shape=%s",
-                        self.camera_name,
-                        processing_shape,
-                        preview_frame.shape[:2],
-                    )
-
-                frame_index += 1
-                if processing.every_n_frames > 1 and frame_index % processing.every_n_frames != 0:
-                    if self._preview_enabled and self._render_preview(
-                        preview_frame,
-                        latest_preview_detections,
-                        preview_pixel_rois,
-                        source_crop_rect,
-                    ):
+                cap = self._open_capture()
+                if not cap.isOpened():
+                    self._set_error(f"Failed to open source: {self.settings.source_url}")
+                    cap.release()
+                    if self._stop_event.wait(self._reconnect_delay()):
                         break
                     continue
 
-                now = time.time()
+                logger.info("Camera '%s': source opened successfully", self.camera_name)
 
-                if processing.max_processed_fps and processing.max_processed_fps > 0:
-                    min_gap = 1.0 / processing.max_processed_fps
-                    if (now - last_processed_ts) < min_gap:
+                frame_queue: deque[np.ndarray] = deque(maxlen=frame_queue_size) if frame_queue_size > 0 else deque()
+                frame_queue_lock = threading.Lock()
+                frame_ready = threading.Condition(frame_queue_lock)
+                reconnect_requested = threading.Event()
+                read_failures = 0
+                capture_thread: threading.Thread | None = None
+
+                def capture_frames_to_queue() -> None:
+                    nonlocal read_failures
+
+                    while not self._stop_event.is_set() and not reconnect_requested.is_set():
+                        ok, queued_frame = cap.read()
+                        if not ok:
+                            read_failures += 1
+                            if read_failures >= processing.read_failures_before_reconnect:
+                                self._set_error("Failed to read frame from source")
+                                reconnect_requested.set()
+                                with frame_ready:
+                                    frame_ready.notify_all()
+                                return
+                            time.sleep(0.05)
+                            continue
+
+                        read_failures = 0
+                        with frame_ready:
+                            frame_queue.append(queued_frame)
+                            frame_ready.notify_all()
+
+                if frame_queue_size > 0:
+                    capture_thread = threading.Thread(
+                        target=capture_frames_to_queue,
+                        name=f"camera-capture-{self.camera_name}",
+                        daemon=True,
+                    )
+                    capture_thread.start()
+
+                try:
+                    while not self._stop_event.is_set():
+                        if frame_queue_size > 0:
+                            with frame_ready:
+                                if not frame_queue and not reconnect_requested.is_set():
+                                    frame_ready.wait(timeout=0.5)
+                                if frame_queue:
+                                    frame = frame_queue.popleft()
+                                elif reconnect_requested.is_set():
+                                    break
+                                else:
+                                    continue
+                        else:
+                            ok, frame = cap.read()
+                            if not ok:
+                                read_failures += 1
+                                if read_failures >= processing.read_failures_before_reconnect:
+                                    self._set_error("Failed to read frame from source")
+                                    break
+                                time.sleep(0.05)
+                                continue
+                            read_failures = 0
+
+                        if processing.scale != 1.0:
+                            frame = cv2.resize(
+                                frame,
+                                None,
+                                fx=processing.scale,
+                                fy=processing.scale,
+                                interpolation=cv2.INTER_AREA,
+                            )
+
+                        preview_frame = frame
+
+                        if preview_pixel_rois is None or preview_roi_shape != preview_frame.shape[:2]:
+                            preview_roi_shape = preview_frame.shape[:2]
+                            preview_pixel_rois = self._preview_rois(preview_roi_shape)
+
+                        if source_crop_rect is None or source_crop_shape != preview_frame.shape[:2]:
+                            source_crop_shape = preview_frame.shape[:2]
+                            source_crop_rect = self._source_crop_rect(source_crop_shape)
+                            if source_crop_rect is not None and source_crop_shape not in self._logged_crop_shapes:
+                                self._logged_crop_shapes.add(source_crop_shape)
+                                logger.info(
+                                    "Camera '%s': source_crop=%s resolved to pixels=%s on frame_shape=%s",
+                                    self.camera_name,
+                                    self.settings.processing.source_crop,
+                                    source_crop_rect,
+                                    source_crop_shape,
+                                )
+
+                        processing_frame = preview_frame
+                        crop_offset_x = 0
+                        crop_offset_y = 0
+                        if source_crop_rect is not None:
+                            sx1, sy1, sx2, sy2 = source_crop_rect
+                            processing_frame = preview_frame[sy1:sy2, sx1:sx2]
+                            crop_offset_x = sx1
+                            crop_offset_y = sy1
+                            if processing_frame.size == 0:
+                                self._set_error(f"Source crop produced an empty frame: {source_crop_rect}")
+                                time.sleep(0.05)
+                                continue
+
+                        processing_shape = processing_frame.shape[:2]
+                        if processing_shape not in self._logged_roi_shapes:
+                            self._logged_roi_shapes.add(processing_shape)
+                            logger.info(
+                                "Camera '%s': processing frame_shape=%s, preview frame_shape=%s",
+                                self.camera_name,
+                                processing_shape,
+                                preview_frame.shape[:2],
+                            )
+
+                        frame_index += 1
+                        if processing.every_n_frames > 1 and frame_index % processing.every_n_frames != 0:
+                            if self._preview_enabled and self._render_preview(
+                                preview_frame,
+                                latest_preview_detections,
+                                preview_pixel_rois,
+                                source_crop_rect,
+                            ):
+                                return
+                            continue
+
+                        now = time.time()
+
+                        if processing.max_processed_fps and processing.max_processed_fps > 0:
+                            min_gap = 1.0 / processing.max_processed_fps
+                            if (now - last_processed_ts) < min_gap:
+                                if self._preview_enabled and self._render_preview(
+                                    preview_frame,
+                                    latest_preview_detections,
+                                    preview_pixel_rois,
+                                    source_crop_rect,
+                                ):
+                                    return
+                                continue
+
+                        if processing.infer_every_seconds > 0 and (now - last_infer_ts) < processing.infer_every_seconds:
+                            if self._preview_enabled and self._render_preview(
+                                preview_frame,
+                                latest_preview_detections,
+                                preview_pixel_rois,
+                                source_crop_rect,
+                            ):
+                                return
+                            continue
+
+                        try:
+                            detections = self._detector.infer(processing_frame)
+                        except Exception as exc:  # runtime model errors should not kill the worker
+                            self._set_error(f"Inference failed: {exc}")
+                            time.sleep(0.05)
+                            continue
+
+                        latest_preview_detections = self._offset_detections(detections, crop_offset_x, crop_offset_y)
+                        self._clear_error()
+                        self._record_snapshot(now, processing_frame.shape[:2], detections)
                         if self._preview_enabled and self._render_preview(
                             preview_frame,
                             latest_preview_detections,
                             preview_pixel_rois,
                             source_crop_rect,
                         ):
-                            break
-                        continue
+                            return
+                        last_processed_ts = now
+                        last_infer_ts = now
+                finally:
+                    reconnect_requested.set()
+                    with frame_ready:
+                        frame_ready.notify_all()
+                    if capture_thread is not None:
+                        capture_thread.join(timeout=1.0)
+                    cap.release()
 
-                if processing.infer_every_seconds > 0 and (now - last_infer_ts) < processing.infer_every_seconds:
-                    if self._preview_enabled and self._render_preview(
-                        preview_frame,
-                        latest_preview_detections,
-                        preview_pixel_rois,
-                        source_crop_rect,
-                    ):
+                if not self._stop_event.is_set():
+                    logger.info(
+                        "Camera '%s': reconnecting to source in %.1f seconds",
+                        self.camera_name,
+                        self._reconnect_delay(),
+                    )
+                    if self._stop_event.wait(self._reconnect_delay()):
                         break
-                    continue
-
-                try:
-                    detections = self._detector.infer(processing_frame)
-                except Exception as exc:  # runtime model errors should not kill the worker
-                    self._set_error(f"Inference failed: {exc}")
-                    time.sleep(0.05)
-                    continue
-
-                latest_preview_detections = self._offset_detections(detections, crop_offset_x, crop_offset_y)
-                self._clear_error()
-                self._record_snapshot(now, processing_frame.shape[:2], detections)
-                if self._preview_enabled and self._render_preview(
-                    preview_frame,
-                    latest_preview_detections,
-                    preview_pixel_rois,
-                    source_crop_rect,
-                ):
-                    break
-                last_processed_ts = now
-                last_infer_ts = now
         finally:
             self._stop_event.set()
-            if capture_thread is not None:
-                capture_thread.join(timeout=1.0)
-            cap.release()
             if self._preview_enabled:
                 try:
                     with self._gui_lock:

@@ -11,6 +11,7 @@ Configurable multi-camera person counting service with pluggable detector and sm
 - SSE endpoints for live count updates.
 - Modular architecture for detector backends and smoothing algorithms.
 - Frame cadence controls: scale, frame stride, max processed FPS, infer interval.
+- Automatic source reconnects after repeated stream read failures.
 
 ## Legal
 
@@ -146,6 +147,12 @@ Freshness behavior:
 - `processing.latest_frame_queue_size` enables queued capture mode when set above `0`.
 - A value of `1` keeps only the freshest frame (lowest staleness, highest frame drop).
 - Larger values keep a short queue of recent frames (less drop, potentially more staleness).
+
+Stream resiliency:
+
+- `processing.read_failures_before_reconnect` controls how many failed `cap.read()` calls are tolerated before the source is reopened.
+- `processing.reconnect_delay_seconds` controls how long the worker waits before reconnecting to the source.
+- `processing.ffmpeg_open_timeout_ms` and `processing.ffmpeg_read_timeout_ms` are passed to OpenCV's FFmpeg backend when supported, which can reduce how long dead HLS/TCP reads block before reconnect logic runs.
 
 ## CORS
 
