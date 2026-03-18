@@ -88,8 +88,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
     )
 
     app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://cheyne.dev"],
+    CORSMiddleware,    
+    allow_origins=[
+        "https://cheyne.dev",
+        "https://www.cheyne.dev",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
