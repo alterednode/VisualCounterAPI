@@ -149,7 +149,7 @@ Freshness behavior:
 
 ## CORS
 
-Set allowed origins in visualcounter/api.py
+Set allowed origins in visualcounter/api.py, the default is all, as this project was started to create a public API
 
 ## Extensibility
 
